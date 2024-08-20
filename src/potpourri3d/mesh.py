@@ -40,6 +40,9 @@ class MeshVectorHeatSolver():
     
     def get_tangent_frames(self):
         return self.bound_solver.get_tangent_frames()
+
+    def get_vertex_principal_curvature_directions(self):
+        return self.bound_solver.get_vertex_principal_curvature_directions()
     
     def get_connection_laplacian(self):
         return self.bound_solver.get_connection_laplacian()
