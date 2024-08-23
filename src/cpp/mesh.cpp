@@ -10,6 +10,8 @@
 #include "geometrycentral/surface/trace_geodesic.h"
 #include "geometrycentral/surface/vector_heat_method.h"
 #include "geometrycentral/surface/vertex_position_geometry.h"
+#include "geometrycentral/surface/signpost_intrinsic_triangulation.h"
+#include "geometrycentral/surface/integer_coordinates_intrinsic_triangulation.h"
 #include "geometrycentral/utilities/eigen_interop_helpers.h"
 
 #include <pybind11/eigen.h>
@@ -76,7 +78,7 @@ private:
 // A wrapper class for the vector heat method solver, which exposes Eigen in/out
 class VectorHeatMethodEigen {
 
-  // TODO use intrinsic triangulations here
+  // use intrinsic triangulations here
 
 public:
   VectorHeatMethodEigen(DenseMatrix<double> verts, DenseMatrix<int64_t> faces, double tCoef = 1.0) {
@@ -91,16 +93,21 @@ public:
     }
 
     // Build the solver
-    solver.reset(new VectorHeatMethodSolver(*geom, tCoef));
+    signpostTri.reset(new IntegerCoordinatesIntrinsicTriangulation(*mesh, *geom));
+    signpostTri->flipToDelaunay();
+    signpostTri->delaunayRefine();
+    solver.reset(new VectorHeatMethodSolver(*signpostTri, tCoef));
   }
 
   // Extend scalars from a collection of vertices
   Vector<double> extend_scalar(Vector<int64_t> sourceVerts, Vector<double> values) {
     std::vector<std::tuple<Vertex, double>> sources;
     for (size_t i = 0; i < sourceVerts.rows(); i++) {
-      sources.emplace_back(mesh->vertex(sourceVerts(i)), values(i));
+      sources.emplace_back(signpostTri->mesh.vertex(sourceVerts(i)), values(i));
     }
-    VertexData<double> ext = solver->extendScalar(sources);
+    VertexData<double> extTmp = solver->extendScalar(sources);
+    VertexData<double> ext(*mesh);
+    ext.fromVector(extTmp.toVector().topRows(mesh->nVertices()));
     return ext.toVector();
   }
 
@@ -136,7 +143,7 @@ public:
       principleCurvatureDirection[v] = geom->vertexPrincipalCurvatureDirections[v].normalize();
     }
 
-    return DenseMatrix<double>(EigenMap<double, 2>(principleCurvatureDirection));
+    return EigenMap<double, 2>(principleCurvatureDirection);
   }
 
 
@@ -153,9 +160,11 @@ public:
     // Pack it as a Vector2
     std::vector<std::tuple<Vertex, Vector2>> sources;
     for (size_t i = 0; i < sourceVerts.rows(); i++) {
-      sources.emplace_back(mesh->vertex(sourceVerts(i)), Vector2{values(i, 0), values(i, 1)});
+      sources.emplace_back(signpostTri->mesh.vertex(sourceVerts(i)), Vector2{values(i, 0), values(i, 1)});
     }
-    VertexData<Vector2> ext = solver->transportTangentVectors(sources);
+    VertexData<Vector2> extTmp = solver->transportTangentVectors(sources);
+    VertexData<Vector2> ext(*mesh);
+    ext.fromVector(extTmp.toVector().topRows(mesh->nVertices()));
 
     return EigenMap<double, 2>(ext);
   }
@@ -164,21 +173,27 @@ public:
 
     // Pack it as a Vector2
     std::vector<std::tuple<Vertex, Vector2>> sources;
-    sources.emplace_back(mesh->vertex(sourceVert), Vector2{values(0), values(1)});
-    VertexData<Vector2> ext = solver->transportTangentVectors(sources);
+    sources.emplace_back(signpostTri->mesh.vertex(sourceVert), Vector2{values(0), values(1)});
+    VertexData<Vector2> extTmp = solver->transportTangentVectors(sources);
+    VertexData<Vector2> ext(*mesh);
+    ext.fromVector(extTmp.toVector().topRows(mesh->nVertices()));
 
     return EigenMap<double, 2>(ext);
   }
 
 
   DenseMatrix<double> compute_log_map(int64_t sourceVert) {
-    return EigenMap<double, 2>(solver->computeLogMap(mesh->vertex(sourceVert)));
+    VertexData<Vector2> extTmp = solver->computeLogMap(signpostTri->mesh.vertex(sourceVert));
+    VertexData<Vector2> ext(*mesh);
+    ext.fromVector(extTmp.toVector().topRows(mesh->nVertices()));
+    return EigenMap<double, 2>(ext);
   }
 
 private:
   std::unique_ptr<ManifoldSurfaceMesh> mesh;
   std::unique_ptr<VertexPositionGeometry> geom;
   std::unique_ptr<VectorHeatMethodSolver> solver;
+  std::unique_ptr<IntrinsicTriangulation> signpostTri;
 };
 
 // A wrapper class for flip-based geodesics
